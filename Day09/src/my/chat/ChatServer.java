@@ -6,98 +6,130 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Scanner;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import org.json.JSONObject;
+
 public class ChatServer {
 
 	// 서버...
-	private static ServerSocket serverSocket = null;
-	protected static ExecutorService executorService = Executors.newFixedThreadPool(10);
+	ServerSocket serverSocket = null;
+
+	protected static ExecutorService executorService = Executors.newFixedThreadPool(100);
+
+	///////////////////////////////////////////////////////////////////
+	Map<String, SocketClient> chatRoom = Collections.synchronizedMap(new HashMap<>());
+	///////////////////////////////////////////////////////////////////
 
 	public static void main(String[] args) {
 
-		System.out.println("================================================");
-		System.out.println("서버를 종료하려면 q 또는 Q를 입력하고 Enter 키를 입력하세요.");
-		System.out.println("================================================");
+		ChatServer chatServer = new ChatServer();
 
-		startServer();
+		// TCP 서버 시작
+		try {
+			chatServer.startServer();
 
-		Scanner scanner = new Scanner(System.in);
-		while (true) {
-			String key = scanner.nextLine();
-			if (key.toLowerCase().equals("q")) {
-				break;
-			}
-		}
-
-		scanner.close();
-
-		stopServer();
-	}
-
-	public static void startServer() {
-		Thread thread = new Thread() {
-
-			@Override
-			public void run() {
-				try {
-					serverSocket = new ServerSocket(50001);
-					System.out.println("서버 시작 됨");
-
-					while (true) {
-						System.out.println("\n 서버 연결 요청을 기다림 \n");
-
-						Socket socket = serverSocket.accept();
-						executorService.execute(() -> {
-							try {
-								InetSocketAddress isa = (InetSocketAddress) socket.getRemoteSocketAddress();
-								System.out.println("서버" + isa.getHostName() + "의 연결 요청을 수락함");
-
-								// 데이터 받기
-								DataInputStream dis = new DataInputStream(socket.getInputStream());
-								String message = dis.readUTF();
-								int data1 = dis.readInt();
-								double data2 = dis.readDouble();
-
-								// 데이터 보내기
-								DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
-								dos.writeUTF(message);
-								dos.writeInt(data1);
-								dos.writeDouble(data2);
-								dos.flush();
-								System.out.println("서버 받은 데이터를 다시 보냄: " + message);
-								System.out.println("서버 받은 데이터를 다시 보냄: " + data1);
-								System.out.println("서버 받은 데이터를 다시 보냄: " + data2);
-
-								// 연결 끊기
-								socket.close();
-								System.out.println("서버" + isa.getHostName() + "의 연결을 끊음");
-							}catch(IOException e) {
-								e.getMessage();
-							}
-
-						});
-
-					}
-				} catch (IOException e) {
-					System.out.println("서버" + e.getMessage());
-
+			/////////////////////////////////////////////////
+			System.out.println("-------------------------------------------------------");
+			System.out.println("서버를 종료하려면 q 또는 Q를 입력하고 Enter 키를 입력하세요.");
+			System.out.println("-------------------------------------------------------");
+			/////////////////////////////////////////////////
+			
+			// 키보드 입력
+			Scanner scanner = new Scanner(System.in);
+			while (true) {
+				String key = scanner.nextLine();
+				if (key.toLowerCase().equals("q")) {
+					break;
 				}
 			}
-		};
+			scanner.close();
+		} catch (Exception e) {
 
+		}
+		// TCP 서버 종료
+		chatServer.stopServer();
+
+	}
+
+	public void startServer() throws Exception {
+
+		// ServerSocket 생성 및 Port 바인딩
+		serverSocket = new ServerSocket(50001);
+		System.out.println("[서버] 시작됨");
+
+		// 작업 스레드 정의
+		Thread thread = new Thread(() -> {
+			try {
+				while (true) {
+					// System.out.println("\n[서버] 연결 요청을 기다림\n");
+					// 연결 수락
+					Socket socket = serverSocket.accept();
+					SocketClient sc = new SocketClient(this, socket);
+
+				}
+
+			} catch (IOException e) {
+				// System.out.println("[서버] " + e.getMessage());
+			}
+
+		});
+
+		// 스레드 시작
 		thread.start();
 	}
 
-	public static void stopServer() {
+	// SocketClient Map에 추가, 삭제 메소드 구현
+	public void addSocketClient(SocketClient socketClient) {
+		String key = socketClient.chatName + "@" + socketClient.clientIp;
+		chatRoom.put(key, socketClient);
+		System.out.println("입장: " + key);
+		System.out.println("현재 채팅자 수: " + chatRoom.size() + "\n");
+	}
+
+	public void removeSocketClient(SocketClient socketClient) {
+		String key = socketClient.chatName + "@" + socketClient.clientIp;
+		chatRoom.remove(key);
+		System.out.println("나감: " + key);
+		System.out.println("현재 채팅자 수: " + chatRoom.size() + "\n");
+	}
+	
+	
+	//sendToAll=========================================
+	public void sendToAll(SocketClient sender, String message) {
+		JSONObject root = new JSONObject();
+		root.put("clientIp", sender.clientIp);
+		root.put("chatName", sender.chatName);
+		root.put("message", message);
+		
+		String json = root.toString();
+
+		Collection<SocketClient> socketClients = chatRoom.values();
+		for (SocketClient sc : socketClients) {
+			if (sc == sender)
+				continue;
+			sc.send(json);
+		}
+	}//sendToAll=========================================
+	
+
+	public void stopServer() {
 		try {
+			// ServerSocket을 닫고 Port 언바인딩
 			serverSocket.close();
-			executorService.shutdownNow();
-			System.out.println("서버 종료됨");
-		} catch (IOException e) {
+			executorService.shutdownNow(); // 스레드풀 종료
+			chatRoom.values().stream().forEach(sc -> sc.close());
+			
+			System.out.println("[서버] 종료됨 ");
+		} catch (IOException e1) {
+			
 		}
 	}
 

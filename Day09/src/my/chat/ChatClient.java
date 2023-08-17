@@ -9,47 +9,100 @@ import java.net.Socket;
 import java.net.UnknownHostException;
 import java.util.Scanner;
 
+import org.json.JSONObject;
+
 public class ChatClient {
 	
-	//소갯
+	//필드
 	static Socket socket;
+	DataInputStream dis;
+	DataOutputStream dos;
+	String chatName;
+	
+	public void connect() throws IOException{
+		socket = new Socket("10.10.108.143",50001);
+		dis=new DataInputStream(socket.getInputStream());
+		dos=new DataOutputStream(socket.getOutputStream());
+	}//connect=====================================================
+	
+	private void receive() {
+		Thread thread = new Thread(()->{
+			try {
+				while(true) {
+					String json = dis.readUTF();
+					
+					JSONObject root = new JSONObject(json);
+					String clientIp = root.getString("clientIp");
+					String chatName = root.getString("chatName");
+					String message = root.getString("message");
+					
+					System.out.println("<"+chatName+"@"+clientIp+">"+message);
+
+				}
+			}catch(Exception e1) {
+				System.out.println("클라이언트 서버 연결 끊김");
+				System.exit(0);
+			}
+		});
+		thread.start();
+	}//receive()-------------------------------------------------------
+	
+	
+	//메소드 json 보내기
+	public void send(String json) throws IOException{
+		dos.writeUTF(json);
+		dos.flush();
+	}//send()==========================================================
+
+	
+	//메소드 서버 연결 종료
+	public void unconnect() throws IOException{
+		socket.close();
+	}//unConnect=======================================================
 
 	public static void main(String[] args) {
 
 		try {
-			Socket socket = new Socket("localhost",50001);
 			
-			System.out.println("클라이언트 연결 성공");
+			ChatClient chatClient = new ChatClient();
+			chatClient.connect();
 			
-			String message ="안녕 자바";
-			int data1 = 20;
-			double data2 = 15.25;
+			Scanner scanner = new Scanner(System.in);
+			System.out.println("대화명 입력: ");
+			chatClient.chatName = scanner.nextLine();
 			
-			//데이터 보내기
-			DataOutputStream dos = new DataOutputStream(socket.getOutputStream());
-			dos.writeUTF(message);
-			dos.writeInt(data1);
-			dos.writeDouble(data2);
-			dos.flush();
-			System.out.println("클라이언트 데이터 보냄: "+message+", "+data1+", "+data2);
+			JSONObject jsonObject = new JSONObject();
+			jsonObject.put("command", "incoming");
+			jsonObject.put("data", chatClient.chatName);
+			String json = jsonObject.toString();
+			chatClient.send(json);
 			
-			//데이터 받기
-			DataInputStream dis = new DataInputStream(socket.getInputStream());
-			String receiveMessage = dis.readUTF();
-			int receiveData1 = dis.readInt();
-			double receiveData2 = dis.readDouble();
+			chatClient.receive();
 			
-			System.out.println("클라이언트 데이터 받음: "+ receiveMessage);
-			System.out.println("클라이언트 데이터 받음: "+ receiveData1);
-			System.out.println("클라이언트 데이터 받음: "+ receiveData2);
+			System.out.println("=====================================");
+			System.out.println("보낼 메시지를 입력하고 Enter");
+			System.out.println("채팅을 종료하려면 q를 입력하고 Enter");
+			System.out.println("=====================================");
 			
+			while(true) {
+				String message = scanner.nextLine();
+				if(message.toLowerCase().equals("q")) {
+					break;
+				}else {
+					jsonObject = new JSONObject();
+					jsonObject.put("command","message");
+					jsonObject.put("data", message);
+					json = jsonObject.toString();
+					chatClient.send(json);
+				}
+			}
 			
-			socket.close();
-			System.out.println("클라이언트 연결 끊음");
-		}catch(UnknownHostException e) {
+			scanner.close();
 			
+			chatClient.unconnect();
+
 		}catch(IOException e) {
-			
+			System.out.println("클라이언트 서버 연결 안됨");
 		}
 		
 	}
